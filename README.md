@@ -34,6 +34,13 @@ deliberadamente lento y reanudable: rate-limit global, tandas con descanso, y co
 
 ## Deploy
 
-GitHub Actions (cron) corre `enumerate` (cada 6 h) y `build` (diario); **GitHub Pages** sirve `/docs`.
-El feed queda en `https://<owner>.github.io/<repo>/feed.csv` → conectar como *Scheduled feed* en
-Commerce Manager → Data Sources → Data Feed.
+GitHub Actions (cron) corre `enumerate` (cada 6 h) y `build` (diario); el feed se sirve por la **URL raw
+pública** del repo (repo público → `raw.githubusercontent.com` responde 200 sin token, con cache de 5 min):
+
+```
+https://raw.githubusercontent.com/<owner>/<repo>/main/docs/feed.csv
+```
+
+Se conecta como *Scheduled feed* en Commerce Manager → Data Sources → Data Feed. No requiere GitHub Pages
+(se descartó: los deploys de Pages quedaban en cola/errored en esta cuenta). Si en el futuro se quiere una
+URL con dominio propio, migrar a Cloudflare Pages/Workers.
