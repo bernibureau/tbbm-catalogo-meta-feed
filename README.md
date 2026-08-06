@@ -44,8 +44,20 @@ Flags: `--rps 1 --concurrency 2 --batch 150 --rest 180 --cooldown 300 --jitter 6
 Commerce Manager → **catálogo `Catalogo TBB` (728929230098138)** → Data Sources → Add → Data Feed →
 Scheduled feed → pegar la URL de Pages → frecuencia diaria. Verificar a las 24-48 h que el match sube a 90%+.
 
-## Estado
+## Seed inicial desde el catálogo de Meta (0 carga al sitio)
 
-Crawler completo y endurecido. **Falta:** pushear a un repo, activar Pages, dejar correr el enumerate unos
-días (arma el seed), y conectar el feed en Commerce Manager. La velocidad exacta se calibra en Actions
-(IP fresca) — desde una IP local ya flageada no es representativo.
+En vez de barrer 54k IDs a ciegas, el seed arranca con los IDs **reales** del catálogo actual de Meta:
+se leen los productos (read-only) y de cada `url` `/product/{id}` se extrae el ID numérico → `data/seed-ids.json`.
+Primer seed: **3.848 IDs** (rango 11→51396). El `build` arma el feed completo desde ahí sin depender del
+barrido; el `enumerate` queda de fondo para descubrir IDs nuevos.
+
+## Estado (desplegado)
+
+- ✅ Repo **público** (Actions ilimitado + Pages gratis; el workload gentil de horas no cabía en la cuota
+  privada de 2.000 min/mes). Contenido no sensible: crawler genérico + datos públicos del sitio.
+- ✅ `data/seed-ids.json` con 3.848 IDs reales del catálogo de Meta.
+- ✅ GitHub Pages activo sobre `/docs` → **feed en `https://bernibureau.github.io/tbbm-catalogo-meta-feed/feed.csv`**.
+- 🔜 Primer `feed-daily` corriendo (arma `docs/feed.csv`). Después: conectar en Commerce Manager y verificar match 90%+.
+
+> La IP de GitHub Actions **pasa el anti-abuse** (un run aguantó 3h30 sin corte por WAF). La validación real
+> es en Actions, no desde una IP local ya flageada.
