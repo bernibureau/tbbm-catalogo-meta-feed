@@ -1,0 +1,11 @@
+{
+  "name": "tbbm-catalogo-meta-feed",
+  "version": "1.0.0",
+  "description": "Crawler gentil + feed para el catálogo de Meta de The Blue Box Market (Deep Beacon).",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "refresh": "node crawler.js build --seed data/seed-ids.json --out docs/feed.csv --refresh",
+    "discover": "node crawler.js build --from 53000 --to 54000 --append --out docs/feed.csv"
+  }
+}

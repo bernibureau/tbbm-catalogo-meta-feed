@@ -1,0 +1,20 @@
+# Descubre IDs existentes por tandas (HEAD gentil, watermark) → data/seed-ids.json. Corre seguido para avanzar el barrido.
+name: feed-enumerate
+on:
+  schedule: [{ cron: "0 */6 * * *" }]   # cada 6 h
+  workflow_dispatch: {}
+permissions: { contents: write }
+concurrency: { group: feed, cancel-in-progress: false }
+jobs:
+  enumerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: node crawler.js enumerate --to 54000 --chunk 3000 --rps 1 --concurrency 2
+      - run: |
+          git config user.name "deepbeacon-bot"; git config user.email "noreply@bureaucreativo.com"
+          git add data/seed-ids.json data/enum-state.json 2>/dev/null || true
+          git commit -m "enumerate: tanda $(date -u +%FT%H:%MZ)" || echo "sin cambios"; git pull --rebase --autostash || true; git push
