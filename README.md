@@ -1,63 +1,39 @@
-# TBBM · Catálogo Meta — crawler gentil + feed
+# Catálogo → Feed para Meta (Data Feed programado)
 
-Genera un feed de productos compatible con Meta desde el sitio público de The Blue Box Market y lo publica
-en una URL fija que Meta re-lee sola (Data Source = feed programado). Resuelve el match rate bajo (37%→90%+)
-**sin permiso de escritura por API** y **sin depender del cliente ni de Direct Group**.
+Genera un feed de productos compatible con **Meta Commerce Manager** desde un sitio de e-commerce público
+y lo publica en una URL fija (GitHub Pages) que Meta re-lee de forma programada. Sin permisos de escritura
+por API: el alta se hace como *Data Feed* desde la UI de Commerce Manager.
 
-> ⚠️ **El sitio tiene anti-abuse AWS (ELB/WAF)**: bloquea (403) el crawling agresivo por tasa/volumen, y la
-> reputación de la IP se degrada con cada bloqueo. Por eso el crawler es **deliberadamente lento**
-> (rate-limit, tandas con descanso, cooldown ante 403) y **reanudable**. Corre en **GitHub Actions**, donde
-> cada corrida usa una IP fresca — no arrastra reputación. Validación real = en Actions, no desde una IP local.
+## Cómo funciona
 
-## Cómo anda
+- **`enumerate`** — descubre IDs de producto existentes por barrido `HEAD` gentil a `/product/{id}/`
+  (200 = existe, 500 = no), por tandas con **watermark** → `data/seed-ids.json`. Reanudable.
+- **`build`** — baja el detalle (`GET`) de cada ID y parsea el `<script application/ld+json>` `@type: Product`
+  (nombre, sku, marca, categoría, imagen, precio, disponibilidad) → `docs/feed.csv`. Detecta la página
+  genérica (200 sin JSON-LD) y no la confunde con "producto inexistente".
+- **Match** — el `id` del feed = ID numérico del producto = `content_id` del pixel → match garantizado.
 
-- **Enumeración** (`enumerate`): HEAD gentil a `/product/{id}/` (200=existe, 500=no) por tandas con
-  **watermark** → arma `data/seed-ids.json`. Avanza un `--chunk` por corrida; reanuda solo.
-- **Detalle** (`build`): GET gentil de los IDs del seed → parsea el `<script application/ld+json>`
-  `@type: Product` (name, sku, brand, category, image, price ARS, availability, condition) → `docs/feed.csv`.
-  Detecta la página genérica/WAF (200 chico sin producto) y NO la confunde con "producto inexistente".
-- **Match:** `id` del feed = ID numérico = **`content_id` que dispara el Pixel** → match garantizado.
+Sin dependencias (Node 18+, `fetch`/`gzip` nativos). Reanudable (cache `docs/products.json` + `--append`/`--refresh`).
 
-Sin dependencias: Node 18+ (fetch/gzip nativos). Reanudable (cache `docs/products.json` + `--append`/`--refresh`).
+## Seed inicial
 
-## Uso local (gentil por default)
+El seed puede sembrarse con los IDs reales de un catálogo existente (se lee el catálogo y de cada `url`
+`/product/{id}` se extrae el ID numérico) → el `build` arma el feed completo sin depender del barrido; el
+`enumerate` queda de fondo para descubrir IDs nuevos.
+
+## Uso
 
 ```bash
-node crawler.js enumerate --to 54000 --chunk 3000      # descubre IDs (tanda), reanudable
+node crawler.js enumerate --to 54000 --chunk 3000        # descubre IDs (tanda), reanudable
 node crawler.js build --seed data/seed-ids.json --out docs/feed.csv --refresh
 ```
 
-Flags: `--rps 1 --concurrency 2 --batch 150 --rest 180 --cooldown 300 --jitter 600`. Bajá `--rps` / subí
-`--rest` si aparece throttling (el log avisa "muchas páginas genéricas").
+Flags: `--rps 1 --concurrency 2 --batch 150 --rest 180 --cooldown 300 --jitter 600`. El crawler es
+deliberadamente lento y reanudable: rate-limit global, tandas con descanso, y cooldown ante `403`
+(el sitio puede tener anti-abuse por tasa/volumen).
 
-## Deploy (GitHub Actions + Pages, 100% nuestro)
+## Deploy
 
-1. Repo standalone (cuenta `bernibureau`). Copiar `crawler.js`, `package.json`, `.github/workflows/*`.
-2. Activar **GitHub Pages** sobre `/docs` en `main` → feed en `https://<owner>.github.io/<repo>/feed.csv`.
-3. Workflows:
-   - **`feed-enumerate.yml`** (cada 6 h): avanza el barrido de IDs, commitea `seed-ids.json`. En pocos días
-     completa el catálogo; después queda vigilando IDs nuevos.
-   - **`feed-daily.yml`** (diario): baja el detalle de los IDs conocidos → `docs/feed.csv` → Pages.
-
-## Conectar en Meta (UI, sin token)
-
-Commerce Manager → **catálogo `Catalogo TBB` (728929230098138)** → Data Sources → Add → Data Feed →
-Scheduled feed → pegar la URL de Pages → frecuencia diaria. Verificar a las 24-48 h que el match sube a 90%+.
-
-## Seed inicial desde el catálogo de Meta (0 carga al sitio)
-
-En vez de barrer 54k IDs a ciegas, el seed arranca con los IDs **reales** del catálogo actual de Meta:
-se leen los productos (read-only) y de cada `url` `/product/{id}` se extrae el ID numérico → `data/seed-ids.json`.
-Primer seed: **3.848 IDs** (rango 11→51396). El `build` arma el feed completo desde ahí sin depender del
-barrido; el `enumerate` queda de fondo para descubrir IDs nuevos.
-
-## Estado (desplegado)
-
-- ✅ Repo **público** (Actions ilimitado + Pages gratis; el workload gentil de horas no cabía en la cuota
-  privada de 2.000 min/mes). Contenido no sensible: crawler genérico + datos públicos del sitio.
-- ✅ `data/seed-ids.json` con 3.848 IDs reales del catálogo de Meta.
-- ✅ GitHub Pages activo sobre `/docs` → **feed en `https://bernibureau.github.io/tbbm-catalogo-meta-feed/feed.csv`**.
-- 🔜 Primer `feed-daily` corriendo (arma `docs/feed.csv`). Después: conectar en Commerce Manager y verificar match 90%+.
-
-> La IP de GitHub Actions **pasa el anti-abuse** (un run aguantó 3h30 sin corte por WAF). La validación real
-> es en Actions, no desde una IP local ya flageada.
+GitHub Actions (cron) corre `enumerate` (cada 6 h) y `build` (diario); **GitHub Pages** sirve `/docs`.
+El feed queda en `https://<owner>.github.io/<repo>/feed.csv` → conectar como *Scheduled feed* en
+Commerce Manager → Data Sources → Data Feed.
