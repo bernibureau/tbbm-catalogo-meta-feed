@@ -48,6 +48,46 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function ensureDir(p) { fs.mkdirSync(path.dirname(p), { recursive: true }); }
 function log(...m) { process.stderr.write(m.join(" ") + "\n"); }
 
+// -------- filtro de productos restringidos por Meta (alcohol / cuchillos) --------
+// Meta rechaza bebidas alcohólicas y armas blancas (cuchillos). El feed se regenera
+// del sitio cada día, así que estos productos se vuelven a subir y se vuelven a
+// rechazar. Los sacamos del feed publicado (siguen en products.json para auditoría).
+// Escape hatch: data/blocklist-ids.json (lista de IDs) fuerza excluir cualquier otro,
+// y data/allowlist-ids.json fuerza mantener uno si la heurística lo saca de más.
+const readIds = (f) => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, "data", f), "utf8")).map(String); } catch { return []; } };
+const BLOCKLIST = new Set(readIds("blocklist-ids.json"));
+const ALLOWLIST = new Set(readIds("allowlist-ids.json"));
+const sinTildes = (s) => String(s == null ? "" : s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+// bebida alcohólica: se matchea por palabra entera (salvo las frases con espacio)
+const ALCO_WORDS = ["vino", "vinos", "whisky", "whiskey", "vodka", "gin", "ginebra", "tequila", "licor", "licores", "champagne", "champan", "espumante", "espumantes", "fernet", "aperol", "campari", "brandy", "cognac", "vermouth", "vermut", "prosecco", "sidra", "grappa", "malbec", "cabernet", "syrah", "chardonnay", "sauvignon", "pinot", "chandon"];
+const ALCO_PHRASES = ["baron b", "luigi bosca", "blanc de"];
+// electro / accesorios / viajes que dicen "vino" pero NO son bebida (heladeras, vinotecas, abridores)
+const ALCO_GUARD_WORDS = ["cava", "vinoteca", "conservadora", "cervecera", "termoelectrica", "termoelectrico", "frigobar", "botellero", "abridor", "sacacorchos", "vertedor", "decantador", "enfriador", "dispenser"];
+const ALCO_GUARD_PHRASES = ["para vino", "para vinos", "ruta del vino"];
+// cuchillos / armas blancas (los corta-pelo dicen "cuchilla", no matchean; "electrico" salva el cuchillo eléctrico de cocina)
+const KNIFE_WORDS = ["cuchillo", "cuchillos", "faca", "facon", "machete", "punal", "daga"];
+const KNIFE_GUARD_WORDS = ["electrico", "electrica"];
+
+/** Devuelve el motivo por el que el producto no debe ir al feed, o null si va. */
+function motivoRestringido(row) {
+  if (ALLOWLIST.has(String(row.id))) return null;
+  if (BLOCKLIST.has(String(row.id))) return "blocklist";
+  const t = sinTildes(row.title);
+  const w = new Set(t.split(/[^a-z0-9]+/).filter(Boolean));
+  const tieneFrase = (list) => list.some((p) => t.includes(sinTildes(p)));
+  const esAccesorioVino = ALCO_GUARD_WORDS.some((x) => w.has(x)) || tieneFrase(ALCO_GUARD_PHRASES);
+  if (!esAccesorioVino && (ALCO_WORDS.some((x) => w.has(x)) || tieneFrase(ALCO_PHRASES))) return "alcohol";
+  if (!KNIFE_GUARD_WORDS.some((x) => w.has(x)) && KNIFE_WORDS.some((x) => w.has(x))) return "cuchillo";
+  return null;
+}
+
+/** Parte las filas en las que van al feed y las restringidas (con su motivo). */
+function partirRestringidos(rows) {
+  const feed = [], excluidos = [];
+  for (const r of rows) { const m = motivoRestringido(r); if (m) excluidos.push({ ...r, motivo: m }); else feed.push(r); }
+  return { feed, excluidos };
+}
+
 // -------- rate limiter global (espaciado + jitter + descanso por tanda) --------
 let nextSlot = 0, blocks = 0, blockedHard = false, reqCount = 0;
 async function pace() {
@@ -120,11 +160,26 @@ function readSeed(file) {
   return [...ids];
 }
 function loadCache(dir) { const f = path.join(dir, "products.json"); return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : []; }
+// Lee un CSV escrito por writeCSV (campos siempre entrecomillados, sin saltos de línea internos).
+function readCSV(file) {
+  if (!fs.existsSync(file)) return [];
+  const lines = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.length);
+  if (!lines.length) return [];
+  const parseLine = (line) => { const out = []; let f = "", q = false; for (let i = 0; i < line.length; i++) { const c = line[i]; if (q) { if (c === '"') { if (line[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; } else { if (c === '"') q = true; else if (c === ",") { out.push(f); f = ""; } else f += c; } } out.push(f); return out; };
+  const head = parseLine(lines[0]);
+  return lines.slice(1).map((l) => { const cells = parseLine(l); const o = {}; head.forEach((h, i) => (o[h] = cells[i])); return o; });
+}
 function writeCSV(rows, out) {
   const cols = ["id", "title", "description", "availability", "condition", "price", "link", "image_link", "brand", "product_type"];
   const esc = (s) => `"${String(s == null ? "" : s).replace(/"/g, '""').replace(/[\r\n]+/g, " ")}"`;
   ensureDir(out); fs.writeFileSync(out, [cols.join(",")].concat(rows.map((r) => cols.map((k) => esc(r[k])).join(","))).join("\n"));
   log(`✓ Feed CSV: ${rows.length} filas → ${out}`);
+}
+function writeExcluded(rows, out) {
+  const cols = ["id", "motivo", "title"];
+  const esc = (s) => `"${String(s == null ? "" : s).replace(/"/g, '""').replace(/[\r\n]+/g, " ")}"`;
+  ensureDir(out); fs.writeFileSync(out, [cols.join(",")].concat(rows.map((r) => cols.map((k) => esc(r[k])).join(","))).join("\n"));
+  if (rows.length) log(`  ⊘ Excluidos del feed (restringidos por Meta): ${rows.length} → ${out}`);
 }
 
 // -------- build (gentil, reanudable) --------
@@ -150,7 +205,14 @@ async function build() {
 
   const stats = { ok: 0, noLd: 0, gone: 0, err: 0, wafish: 0 };
   let idx = 0, since = 0;
-  const flush = () => { const rows = [...cache.values()]; ensureDir(cachePath); fs.writeFileSync(cachePath, JSON.stringify(rows)); writeCSV(cats ? rows.filter((r) => cats.includes((r.product_type || "").toLowerCase())) : rows, feedPath); };
+  const flush = () => {
+    const rows = [...cache.values()];
+    ensureDir(cachePath); fs.writeFileSync(cachePath, JSON.stringify(rows));
+    const base = cats ? rows.filter((r) => cats.includes((r.product_type || "").toLowerCase())) : rows;
+    const { feed, excluidos } = partirRestringidos(base);
+    writeCSV(feed, feedPath);
+    writeExcluded(excluidos, path.join(dir, "excluded.csv"));
+  };
 
   async function worker() {
     while (idx < todo.length && !blockedHard) {
@@ -203,9 +265,22 @@ async function enumerate() {
   log(`✓ Enumerate: +${found} nuevos · total ${known.size} IDs · watermark ${lastDone}/${ceil} → ${seedPath}` + (blockedHard ? " · ⛔ CORTADO (reanuda la tanda)" : ""));
 }
 
+// -------- clean (aplica el filtro de restringidos a un feed existente, sin recrawlear) --------
+function clean() {
+  const out = args.out || "docs/feed.csv";
+  const rows = readCSV(out);
+  if (!rows.length) { log(`Sin filas en ${out}.`); return; }
+  const { feed, excluidos } = partirRestringidos(rows);
+  writeCSV(feed, out);
+  writeExcluded(excluidos, path.join(path.dirname(out), "excluded.csv"));
+  const porMotivo = excluidos.reduce((a, r) => ((a[r.motivo] = (a[r.motivo] || 0) + 1), a), {});
+  log(`✓ Clean: ${feed.length} al feed · ${excluidos.length} excluidos (${Object.entries(porMotivo).map(([k, v]) => `${k} ${v}`).join(" · ")})`);
+}
+
 (async function main() {
   if (CMD === "build") return build();
   if (CMD === "enumerate") return enumerate();
-  log(`Comando: ${CMD}. Usá: enumerate --from N --to M  |  build --seed data/seed-ids.json --out docs/feed.csv`);
+  if (CMD === "clean") return clean();
+  log(`Comando: ${CMD}. Usá: enumerate --from N --to M  |  build --seed data/seed-ids.json --out docs/feed.csv  |  clean --out docs/feed.csv`);
   process.exit(1);
 })().catch((e) => { log("FATAL", e.stack || e.message); process.exit(1); });

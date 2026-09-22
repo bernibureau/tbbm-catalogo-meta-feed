@@ -16,5 +16,5 @@ jobs:
       - run: node crawler.js build --seed data/seed-ids.json --out docs/feed.csv --refresh --rps 1 --concurrency 2
       - run: |
           git config user.name "deepbeacon-bot"; git config user.email "noreply@bureaucreativo.com"
-          git add docs/feed.csv docs/products.json 2>/dev/null || true
+          git add docs/feed.csv docs/products.json docs/excluded.csv 2>/dev/null || true
           git commit -m "feed: refresh $(date -u +%F)" || echo "sin cambios"; git pull --rebase --autostash || true; git push

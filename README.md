@@ -12,8 +12,25 @@ por API: el alta se hace como *Data Feed* desde la UI de Commerce Manager.
   (nombre, sku, marca, categoría, imagen, precio, disponibilidad) → `docs/feed.csv`. Detecta la página
   genérica (200 sin JSON-LD) y no la confunde con "producto inexistente".
 - **Match** — el `id` del feed = ID numérico del producto = `content_id` del pixel → match garantizado.
+- **`clean`** — aplica el filtro de restringidos a un `feed.csv` ya generado, sin recrawlear
+  (`node crawler.js clean --out docs/feed.csv`). El `build` ya lo aplica solo.
 
 Sin dependencias (Node 18+, `fetch`/`gzip` nativos). Reanudable (cache `docs/products.json` + `--append`/`--refresh`).
+
+## Productos restringidos por Meta (alcohol / cuchillos)
+
+El sitio actualiza sus productos y el feed se regenera cada día, así que un producto que Meta rechaza
+(bebidas alcohólicas, cuchillos) se vuelve a subir y se vuelve a rechazar. Para cortar el ciclo, el feed
+**excluye** esos productos antes de publicarlos (siguen en `docs/products.json` para auditoría; los excluidos
+quedan listados en `docs/excluded.csv` con su motivo). No afecta la salud de la cuenta: estos productos no
+están vinculados a anuncios.
+
+La regla clasifica por el **título** (con límite de palabra, para no barrer de más): las heladeras/vinotecas
+("Cava de Vinos"), los accesorios ("Set para Vino", abridores), los viajes ("Ruta del Vino"), los cubiertos
+Tramontina y el cuchillo eléctrico de cocina **quedan dentro**. Ajustes finos por ID, sin tocar código:
+
+- `data/blocklist-ids.json` — IDs a **excluir** siempre (además de la heurística).
+- `data/allowlist-ids.json` — IDs a **mantener** siempre (si la heurística saca uno de más).
 
 ## Seed inicial
 
